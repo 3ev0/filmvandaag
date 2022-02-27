@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  filmvandaag:
+    build: .
+    image: filmvandaag
+    depends_on:
+      - selenium-chrome
+    container_name: filmvandaag
+    env_file: settings.env
+  selenium-chrome:
+    image: "selenium/standalone-chrome"
+    shm_size: "2gb"
+    expose:
+      - 4444
+    container_name: selenium-chrome

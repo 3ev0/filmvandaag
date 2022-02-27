@@ -1,10 +1,12 @@
 import logging
 
-from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup, ParseMode
+from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup, ParseMode, Bot, TelegramError
+from telegram.utils.helpers import escape_markdown
 from telegram.ext import Updater, CommandHandler, CallbackContext, \
     ConversationHandler, MessageHandler, Filters, Defaults
 
 import config
+import scraper
 
 log = logging.getLogger(__name__)
 
@@ -16,7 +18,7 @@ STATE_INIT_NEWMOVIES, STREAMINGSERVICE, GENRE, IMDB_SCORE, RELEASE_DATE = range(
 def parse_services_input(services_str: str) -> (list, list):
     """ Return (unrecognized services, recognized services) """
     errs = []
-    if services_str.lower().startswith("all"):
+    if services_str.lower() in ["all", "any"]:
         services = config.streaming_services
     else:
         service_strings = [ss.lower() for ss in services_str.split()]
@@ -25,13 +27,18 @@ def parse_services_input(services_str: str) -> (list, list):
     return errs, services
 
 
+def handle_bot_exception(u: object, context: CallbackContext) -> None:
+    raise context.error
+
+
 class FilmVandaagBot:
 
-    def __init__(self, config: dict) -> None:
-        self.updater = Updater(token=config["TG_FV_BOT_TOKEN"])#, defaults=Defaults(parse_mode=ParseMode.MARKDOWN_V2))
+    def __init__(self, config: dict, scraper: scraper.FilmVandaagScraper) -> None:
+        self.updater = Updater(token=config["TG_FV_BOT_TOKEN"])
+        self.updater.dispatcher.add_error_handler(handle_bot_exception)
         self.updater.dispatcher.add_handler(CommandHandler(["best", "top", "beste"], self.top_movies))
         self.updater.dispatcher.add_handler(CommandHandler(["random", "kiesmaar"], self.random_movies))
-
+        self.scraper = scraper
         self.new_movie_conv_handler = ConversationHandler(
             entry_points=[CommandHandler(["new", "nieuw"], self.new_movies)],
             states={
@@ -39,7 +46,7 @@ class FilmVandaagBot:
             },
             fallbacks=[CommandHandler('cancel', self.cancel)],
         )
-
+        self.config = config
         self.updater.dispatcher.add_handler(self.new_movie_conv_handler)
 
         log.info("FilmVandaagBot initialized.")
@@ -75,10 +82,28 @@ class FilmVandaagBot:
 
         else:
             context.user_data["services"] = services
+            movies = []
             update.message.reply_text(
-                f'Okido. Hier zijn de films voor {",".join(services)}:',
+                f'Okido. Momentje. Ik haal de films op voor {",".join(services)}...',
                 reply_markup=ReplyKeyboardRemove(),
             )
+            for service in services:
+                movies += self.scraper.scrape_new_movies(service, self.config["NEW_MOVIES_THRESHOLD_DAYS"])
+            movies = [m for m in sorted(movies, key=lambda movie: movie["rating"], reverse=True)
+                      if m["rating"] >= self.config["NEW_MOVIES_MIN_RATING"]]
+            update.message.reply_text(
+                f'Deze films zijn de laatste {self.config["NEW_MOVIES_THRESHOLD_DAYS"]} dagen toegevoegd '
+                f'en hebben een score van {self.config["NEW_MOVIES_MIN_RATING"]} of hoger.',
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            reply = ""
+            for m in movies:
+                reply += f"*{escape_markdown(m['title'], version=2)}* on {m['service']} " \
+                         f"imdb:*{escape_markdown(str(m['rating']), version=2)}*\n"
+            if not reply:
+                reply = f"Geen nieuwe films gevonden in afgelopen {self.config['NEW_MOVIES_THRESHOLD_DAYS']} dagen."
+
+            update.message.reply_text(reply, reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN_V2)
             return ConversationHandler.END
 
 

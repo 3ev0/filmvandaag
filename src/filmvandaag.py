@@ -8,7 +8,7 @@ import argparse
 
 import telegram_alert
 
-import bot
+import bot, scraper
 
 config ={}
 
@@ -28,7 +28,9 @@ def build_config() -> dict:
     config["TG_FV_BOT_TOKEN"] = os.environ["TG_FV_BOT_TOKEN"]
     config["TG_ALERT_CHANNEL"] = os.environ["TG_ALERT_CHANNEL"]
     config["TG_ALERT_BOT_TOKEN"] = os.environ["TG_ALERT_BOT_TOKEN"]
-    config["SELENIUM_HOST"] = os.environ["SELENIUM_HOST"]
+    config["SELENIUM_CONNSTR"] = os.environ["SELENIUM_CONNSTR"]
+    config["NEW_MOVIES_MIN_RATING"] = int(os.environ.get("NEW_MOVIES_MIN_RATING", 5))
+    config["NEW_MOVIES_THRESHOLD_DAYS"] = int(os.environ.get("NEW_MOVIES_THRESHOLD_DAYS", 7))
     return config
 
 
@@ -47,7 +49,8 @@ if __name__ == "__main__":
                                                 config["TG_ALERT_CHANNEL"], "FilmVandaag")
     alert_bot.info("Program started.")
     try:
-        fv_bot = bot.FilmVandaagBot(config)
+        fv_scraper = scraper.FilmVandaagScraper(config)
+        fv_bot = bot.FilmVandaagBot(config, fv_scraper)
         fv_bot.start()
         while True:
             time.sleep(60)
@@ -57,4 +60,5 @@ if __name__ == "__main__":
         logging.error(f"A fatal exception occurred: {str(err)}")
         raise
     finally:
+        fv_scraper.driver.quit()
         alert_bot.info("Program ended.")

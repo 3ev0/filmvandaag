@@ -1,5 +1,4 @@
 import logging
-import platform
 
 import telegram
 
@@ -7,11 +6,12 @@ log = logging.getLogger(__name__)
 
 
 class TelegramAlertBot:
-    def __init__(self, tg_token: str, chat_id: str, program_name: str):
-        self.chat_id = chat_id
+    def __init__(self, config: dict, program_name: str) -> None:
+        self.config = config
+        self.chat_id = config["TG_ALERT_CHANNEL"]
         self.program_name = program_name
-        self.hostname = platform.node()
-        self.bot = telegram.Bot(tg_token)
+        self.instance_name = config["TG_ALERT_INSTANCE_NAME"]
+        self.bot = telegram.Bot(config["TG_ALERT_BOT_TOKEN"])
         log.info(f"TelegramAlertBot initialized: {self}")
 
     def __repr__(self):
@@ -32,7 +32,7 @@ class TelegramAlertBot:
 
     def _send_message(self, message: str) -> None:
         idx = 0
-        message = f"{self.program_name} (on {self.hostname}) | {message}"
+        message = f"{self.program_name} ({self.instance_name}) | {message}"
         while idx < len(message):
             ttext = message[idx:idx + 4096]
             params = {"text": ttext, "chat_id": self.chat_id, "parse_mode": "Markdown"}

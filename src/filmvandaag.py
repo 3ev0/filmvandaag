@@ -28,6 +28,7 @@ def build_config() -> dict:
     config["TG_FV_BOT_TOKEN"] = os.environ["TG_FV_BOT_TOKEN"]
     config["TG_ALERT_CHANNEL"] = os.environ["TG_ALERT_CHANNEL"]
     config["TG_ALERT_BOT_TOKEN"] = os.environ["TG_ALERT_BOT_TOKEN"]
+    config["TG_ALERT_INSTANCE_NAME"] = os.environ.get("TG_ALERT_INSTANCE_NAME", "unknown")
     config["SELENIUM_CONNSTR"] = os.environ["SELENIUM_CONNSTR"]
     config["NEW_MOVIES_MIN_RATING"] = int(os.environ.get("NEW_MOVIES_MIN_RATING", 5))
     config["NEW_MOVIES_THRESHOLD_DAYS"] = int(os.environ.get("NEW_MOVIES_THRESHOLD_DAYS", 7))
@@ -45,8 +46,7 @@ if __name__ == "__main__":
     build_config()
     logging.info("Program started with config:")
     logging.info(pprint.pformat(config))
-    alert_bot = telegram_alert.TelegramAlertBot(config["TG_ALERT_BOT_TOKEN"],
-                                                config["TG_ALERT_CHANNEL"], "FilmVandaag")
+    alert_bot = telegram_alert.TelegramAlertBot(config, "FilmVandaag")
     alert_bot.info("Program started.")
     try:
         fv_scraper = scraper.FilmVandaagScraper(config)

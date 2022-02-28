@@ -1,9 +1,10 @@
 import logging
 
-from telegram import Update, ReplyKeyboardRemove, ReplyKeyboardMarkup, ParseMode, Bot, TelegramError
+from telegram import Update, InlineKeyboardMarkup, ReplyKeyboardRemove, \
+    ReplyKeyboardMarkup, ParseMode, Bot, TelegramError, InlineKeyboardButton
 from telegram.utils.helpers import escape_markdown
 from telegram.ext import Updater, CommandHandler, CallbackContext, \
-    ConversationHandler, MessageHandler, Filters, Defaults
+    ConversationHandler, MessageHandler, Filters, Defaults, CallbackQueryHandler
 
 import config
 import scraper
@@ -12,7 +13,7 @@ log = logging.getLogger(__name__)
 
 POLL_INTERVAL = 2.0
 
-STATE_INIT_NEWMOVIES, STREAMINGSERVICE, GENRE, IMDB_SCORE, RELEASE_DATE = range(5)
+STREAMINGSERVICE, GENRES, MINSCORE, RELEASEYEAR = range(4)
 
 
 def parse_services_input(services_str: str) -> (list, list):
@@ -36,24 +37,47 @@ class FilmVandaagBot:
     def __init__(self, config: dict, scraper: scraper.FilmVandaagScraper) -> None:
         self.updater = Updater(token=config["TG_FV_BOT_TOKEN"])
         self.updater.dispatcher.add_error_handler(handle_bot_exception)
-        self.updater.dispatcher.add_handler(CommandHandler(["best", "top", "beste"], self.top_movies))
-        self.updater.dispatcher.add_handler(CommandHandler(["random", "kiesmaar"], self.random_movies))
         self.scraper = scraper
-        self.new_movie_conv_handler = ConversationHandler(
-            entry_points=[CommandHandler(["new", "nieuw"], self.new_movies)],
+        self.search_movie_conv_handler = ConversationHandler(
+            entry_points=[CommandHandler(["zoek"], self.search_movies)],
             states={
-                STREAMINGSERVICE: [MessageHandler(Filters.update & ~Filters.command, self.handle_input_services)]
+                GENRES: [CallbackQueryHandler(self.handle_input_genres)],
             },
             fallbacks=[CommandHandler('cancel', self.cancel)],
         )
+        self.new_movie_conv_handler = ConversationHandler(
+            entry_points=[CommandHandler(["new", "nieuw"], self.new_movies)],
+            states={
+                STREAMINGSERVICE: [MessageHandler(Filters.update & ~Filters.command, self.handle_input_services)],
+            },
+            fallbacks=[CommandHandler('cancel', self.cancel)]
+        )
         self.config = config
         self.updater.dispatcher.add_handler(self.new_movie_conv_handler)
-
+        self.updater.dispatcher.add_handler(self.search_movie_conv_handler)
         log.info("FilmVandaagBot initialized.")
 
     def start(self):
         self.updater.start_polling(poll_interval=POLL_INTERVAL)
         log.info("FilmVandaagBot started polling")
+
+    def search_movies(self, update: Update, context: CallbackContext) -> int:
+        """Starts the conversation and asks user about streaming services"""
+        log.info(f"Search_movies conversation started by user {update.message.from_user}.")
+        buttons = config.genres + ["overig"]
+        keyboard = [[InlineKeyboardButton(b, callback_data=str(b))] for b in buttons]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        update.message.reply_text("Oke, we gaan een film zoeken. Welke genres?", reply_markup=reply_markup)
+        return GENRES
+
+    def handle_input_genres(self, update: Update, context: CallbackContext) -> int:
+        pass
+
+    def handle_input_min_score(self, update: Update, context: CallbackContext) -> int:
+        pass
+
+    def handle_input_release_year(self, update: Update, context: CallbackContext) -> int:
+        pass
 
     def cancel(self, update: Update, context: CallbackContext) -> int:
         """Cancels and ends the conversation."""

@@ -86,3 +86,19 @@ class FilmVandaagScraper:
                 log.info(f"Movie found: {movie}")
                 movies.append(movie)
         return movies
+
+    def scrape_search_movies(self, services: list = None,
+                             genres: list = None,
+                             imdb_score: (float, float) = None,
+                             release_year: (int, int) = None
+                             ) -> dict:
+        """
+        https://www.filmvandaag.nl/zoek?
+        categorie=films&
+        vod=netflix%2Camazon%2Cpathe%2Cdisney&
+        genre=actie%2Canimatie&
+        imdb-score=2%2C9&
+        speelduur=85%2C260&
+        jaar=1954%2C2002
+        :return:
+        """

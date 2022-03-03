@@ -32,6 +32,7 @@ def build_config() -> dict:
     config["SELENIUM_CONNSTR"] = os.environ["SELENIUM_CONNSTR"]
     config["NEW_MOVIES_MIN_RATING"] = int(os.environ.get("NEW_MOVIES_MIN_RATING", 5))
     config["NEW_MOVIES_THRESHOLD_DAYS"] = int(os.environ.get("NEW_MOVIES_THRESHOLD_DAYS", 7))
+    config["IMDB_VOTES_THRESHOLD"] = int(os.environ.get("IMDB_VOTES_THRESHOLD", 10000))
     return config
 
 
@@ -60,5 +61,6 @@ if __name__ == "__main__":
         logging.error(f"A fatal exception occurred: {str(err)}")
         raise
     finally:
-        fv_scraper.driver.quit()
+        if fv_scraper.driver:
+            fv_scraper.driver.quit()
         alert_bot.info("Program ended.")

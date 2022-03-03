@@ -1,4 +1,4 @@
-streaming_services = ["netflix", "disney", "prime", "pathe"]
+streaming_services = ["netflix", "disney", "amazon", "pathe"]
 
 genres = ["actie",
           "animatie",

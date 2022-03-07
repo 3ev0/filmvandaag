@@ -13,10 +13,12 @@ import scraper
 log = logging.getLogger(__name__)
 
 POLL_INTERVAL = 2.0
-CONV_TIMEOUT=30.0
+CONV_TIMEOUT = 30.0
+MOVIE_SEARCH_BATCH_SIZE = 20
 
-STREAMINGSERVICE, GENRES, IMDB_SCORE, RELEASE_YEAR = range(4)
-RESP_TO_IMDB_SCORE, RESP_QUIT = [f"sc_{n}" for n in range(2)]
+
+STREAMINGSERVICE, GENRES, IMDB_SCORE, RELEASE_YEAR, SHOW_MOVIES = range(5)
+RESP_TO_IMDB_SCORE, RESP_QUIT, RESP_MORE = [f"sc_{n}" for n in range(3)]
 
 
 def parse_services_input(services_str: str) -> (list, list):
@@ -56,6 +58,10 @@ class FilmVandaagBot:
                     CallbackQueryHandler(self.cancel, pattern='^' + str(RESP_QUIT) + '$'),
                     CallbackQueryHandler(self.handle_input_release_year)
                 ],
+                SHOW_MOVIES: [
+                    CallbackQueryHandler(self.cancel, pattern='^' + str(RESP_QUIT) + '$'),
+                    CallbackQueryHandler(self.show_more_movies)
+                ],
                 ConversationHandler.TIMEOUT: [
                     CallbackQueryHandler(self.handle_timeout)
                 ]
@@ -84,9 +90,8 @@ class FilmVandaagBot:
         """Starts the conversation and asks user about streaming services"""
         log.info(f"Search_movies conversation started by user {update.message.from_user}.")
         button_texts = config.genres + ["overig"]
-        next_button = InlineKeyboardButton("volgende >", callback_data=str(RESP_TO_IMDB_SCORE))
         cancel_button = InlineKeyboardButton("Stop maar", callback_data=RESP_QUIT)
-        keyboard = [[next_button]] + [[InlineKeyboardButton(b, callback_data=str(b))] for b in button_texts]
+        keyboard = [[InlineKeyboardButton(b, callback_data=str(b))] for b in button_texts]
         keyboard += [[cancel_button]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         update.message.reply_text("Oke, ik ga films zoeken. Welke genres?", reply_markup=reply_markup)
@@ -95,35 +100,22 @@ class FilmVandaagBot:
     def handle_input_genres(self, update: Update, context: CallbackContext) -> int:
         if "selected_genres" not in context.user_data:
             context.user_data["selected_genres"] = []
-        next_button = InlineKeyboardButton("volgende >", callback_data=str(RESP_TO_IMDB_SCORE))
         cancel_button = InlineKeyboardButton("Stop maar", callback_data=RESP_QUIT)
         query = update.callback_query
         resp = query.data
         query.answer()
-        if resp == str(RESP_TO_IMDB_SCORE):
-            keyboard = []
-            keyboard.append([InlineKeyboardButton(f"{n}+", callback_data=str(n)) for n in [0, 5, 6, 7, 8]])
-            keyboard.append([cancel_button])
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            genres_text = ', '.join("*" + sg + "*" for sg in context.user_data['selected_genres'])
-            query.edit_message_text(
-                text=f"Genres: {genres_text}\.\nWat moet de IMDB\-score zijn?",
-                reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2
-            )
-            return IMDB_SCORE
-        else: # genre selected
-            context.user_data["selected_genres"].append(resp)
-            log.info(f"Added genre selection {resp}")
-            button_texts = [t for t in config.genres if t not in (context.user_data["selected_genres"]+ ["overig"])]
-            keyboard = [[next_button]] + [[InlineKeyboardButton(b, callback_data=str(b))] for b in button_texts]
-            keyboard += [[cancel_button]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            genres_text = ', '.join("*" + sg + "*" for sg in context.user_data['selected_genres'])
-            query.edit_message_text(
-                text=f"Genres: {genres_text}\. Nog meer?",
-                                     reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2
-            )
-            return GENRES
+        keyboard = [[InlineKeyboardButton("boeiend", callback_data=str(0))]]
+        context.user_data["selected_genres"].append(resp)
+        log.info(f"Added genre selection {resp}")
+        keyboard.append([InlineKeyboardButton(f"{n}+", callback_data=str(n)) for n in [5, 6, 7, 8]])
+        keyboard.append([cancel_button])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        genre_text = f"*{context.user_data['selected_genres']}*"
+        query.edit_message_text(
+            text=f"Genre: {genre_text}\.\nWat moet de IMDB\-score zijn?",
+            reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2
+        )
+        return IMDB_SCORE
 
     def handle_input_imdb_score(self, update: Update, context: CallbackContext) -> int:
         query = update.callback_query
@@ -133,15 +125,15 @@ class FilmVandaagBot:
         context.user_data["min_imdb_score"] = resp
         query.answer()
         cur_year = datetime.datetime.today().year
-        keyboard = [[InlineKeyboardButton("boeit niet", callback_data=str(1900))]]
+        keyboard = [[InlineKeyboardButton("boeiend", callback_data=str(1900))]]
         keyboard += [[InlineKeyboardButton(f"> {n}", callback_data=str(n))] for n in [cur_year-20, cur_year-5, cur_year-2]]
         keyboard += [[InlineKeyboardButton(str(cur_year), callback_data=str(cur_year))]]
         keyboard.append([cancel_button])
         reply_markup = InlineKeyboardMarkup(keyboard)
-        genres_text = ', '.join("*" + sg + "*" for sg in context.user_data['selected_genres'])
+        genre_text = f"*{context.user_data['selected_genres']}*"
         imdb_score_text = "*" + resp + "\+*"
         query.edit_message_text(
-            text=f"Genres: {genres_text}\.\nIMDB\-score: {imdb_score_text}\nHoe recent moet de film zijn?",
+            text=f"Genres: {genre_text}\.\nIMDB\-score: {imdb_score_text}\nHoe recent moet de film zijn?",
             reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN_V2
         )
         return RELEASE_YEAR
@@ -152,42 +144,84 @@ class FilmVandaagBot:
         log.info(f"callback handle_input_release_year with query data: {resp}")
         context.user_data["min_release_year"] = resp
         query.answer()
+
+        movies_generator = self.scraper.search_movies(services=config.streaming_services,
+                                            genres=context.user_data["selected_genres"],
+                                            imdb_score=(context.user_data["min_imdb_score"], None),
+                                            release_year=(context.user_data["min_release_year"], None),
+                                            votes_threshold=self.config["IMDB_VOTES_THRESHOLD"])
+        context.user_data["movies_generator"] = movies_generator
+        context.user_data["search_url"] = self.scraper.get_search_movies_browser_url(services=config.streaming_services,
+                                            genres=context.user_data["selected_genres"],
+                                            imdb_score=(context.user_data["min_imdb_score"], None),
+                                            release_year=(context.user_data["min_release_year"], None))
         genres_text = "Genres: " + ', '.join("*" + sg + "*" for sg in context.user_data['selected_genres'])
         imdb_score_text = "IMDB\-score: *" + context.user_data["min_imdb_score"] + "\+*"
         release_year_text = f"Uitgekomen na: *{resp}*"
+        search_url_text = f"[Filmvandaag\.nl]({context.user_data['search_url']})"
+        reply_text = f"{genres_text}\n{imdb_score_text}\n{release_year_text}\n{search_url_text}"
+        log.debug(reply_text)
         query.edit_message_text(
-            text=f"{genres_text}\n{imdb_score_text}\n{release_year_text}\nIk ben aan het zoeken\.\.\.",
-            parse_mode=ParseMode.MARKDOWN_V2
-        )
-        result = self.scraper.search_movies(genres=context.user_data["selected_genres"],
-                                            imdb_score=(context.user_data["min_imdb_score"], None),
-                                            release_year=(context.user_data["min_release_year"], None),
-                                            page=0,
-                                            votes_threshold=self.config["IMDB_VOTES_THRESHOLD"])
-        movies = result["movies"]
-        context.user_data["search_url"] = result["search_url"]
-        movielines = []
-        for movie in movies:
-            movie_line = f"[*{escape_markdown(movie['title'], version=2)}*]({movie['url']})"
-            movie_line += f" \({movie['release_year']}\)"
-            movie_line += f" imdb *{escape_markdown(str(movie['rating']), version=2)}*"
-            movielines.append(movie_line)
-        movies_text = "\n".join(movielines)
-        query.edit_message_text(
-            text=f"{genres_text}\n{imdb_score_text}\n{release_year_text}\nDeze heb ik gevonden:\n"
-                 f"{movies_text}",
+            text=reply_text,
+            reply_markup=None,
             parse_mode=ParseMode.MARKDOWN_V2,
             disable_web_page_preview=True
         )
-        context.user_data["results_page"] = 0
-        return ConversationHandler.END
+
+        return self.show_more_movies(update, context)
+
+
+    def show_more_movies(self, update: Update, context: CallbackContext) -> int:
+        query = update.callback_query
+        resp = query.data
+        log.info(f"callback show_more_movies with query data: {resp}")
+
+
+        movielines = []
+        thereismore = True
+        try:
+            for i in range(MOVIE_SEARCH_BATCH_SIZE):
+                movie = next(context.user_data["movies_generator"])
+                movie_line = f"[*{escape_markdown(movie['title'], version=2)}*]({movie['url']})"
+                movie_line += f" \({movie['release_year']}\)"
+                movie_line += f" imdb *{escape_markdown(str(movie['rating']), version=2)}*"
+                movielines.append(movie_line)
+        except StopIteration: # out of movies
+            thereismore = False
+        finally:
+            movies_text = "\n".join(movielines)
+        query.answer()
+        if "previous_movies_text" in context.user_data:
+            query.edit_message_text(
+                text=context.user_data["previous_movies_text"],
+                reply_markup=None,
+                parse_mode=ParseMode.MARKDOWN_V2,
+                disable_web_page_preview=True
+            )
+        if not thereismore:
+            query.message.reply_text(text=f"{movies_text}\n\ndat was het\.",
+                                     parse_mode=ParseMode.MARKDOWN_V2,
+                                     disable_web_page_preview=True)
+            return ConversationHandler.END
+        else:
+            keyboard = [[InlineKeyboardButton("meer", callback_data=str(1900))]]
+            keyboard_markup = InlineKeyboardMarkup(keyboard)
+            context.user_data["previous_movies_text"] = movies_text
+            query.message.reply_text(text=movies_text,
+                                     reply_markup=keyboard_markup,
+                                     parse_mode=ParseMode.MARKDOWN_V2,
+                                     disable_web_page_preview=True)
+            return SHOW_MOVIES
 
     def handle_timeout(self,  update: Update, context: CallbackContext) -> int:
-        resp = update.callback_query.data
+        query = update.callback_query
+        resp = query.data
+        user = query.from_user
         log.info(f"callback timeout with query data: {resp}")
-        update.message.reply_text(
-            'Duurt te lang...', reply_markup=ReplyKeyboardRemove()
-        )
+        query.message.edit_reply_markup(reply_markup=None)
+        query.message.reply_text(text=f"Duurt laaaaang\.",
+                                 parse_mode=ParseMode.MARKDOWN_V2
+                                 )
         context.user_data.clear()
         return ConversationHandler.END
 
@@ -197,9 +231,10 @@ class FilmVandaagBot:
         user = query.from_user
         log.info(f"callback cancel with query data: {resp}")
         log.info("User %s canceled the conversation.", user.first_name)
-        query.edit_message_text(
-            'Oke, dan niet.'
-        )
+        query.message.edit_reply_markup(reply_markup=None)
+        query.message.reply_text(text=f"Oke\, dan niet\.",
+                                 parse_mode=ParseMode.MARKDOWN_V2
+                                 )
         context.user_data.clear()
         return ConversationHandler.END
 

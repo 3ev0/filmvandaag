@@ -54,51 +54,60 @@ def get_chrome_driver(connstr) -> WebDriver:
 class FilmVandaagScraper:
 
     def __init__(self, config):
-        self.driver = None
         self.config = config
         log.info("FilmVandaagScraper instance initialized.")
 
-    def scrape_new_movies(self, service: str, added_days_ago: int) -> bool:
-        if not self.driver:
-            self.driver = get_chrome_driver(self.config["SELENIUM_CONNSTR"])
-        url = NEW_MOVIES_URLS[service]
-        time_threshold = datetime.datetime.now() - datetime.timedelta(days=added_days_ago)
-        log.info(f"Scraping movies from {url}...")
-        self.driver.get(url)
-        title_els = self.driver.find_elements(By.CSS_SELECTOR, "h3.is-list-heading")
-        list_els = self.driver.find_elements(By.CSS_SELECTOR, "ul.item-list")
-        movies = []
-        for i in range(len(title_els)):
-            title = title_els[i].text
-            if "vandaag" in title.lower():
-                dt = dateparser.parse("vandaag")
-            else:
-                dt = dateparser.parse(title)
-            if dt < time_threshold: # the next movies are added too long ago
-                log.info(f"Reached time threshold ({dt}. Stopped scraping.")
-                break
-            rating_els = list_els[i].find_elements(By.CSS_SELECTOR, "div.rating span")
-            movie_title_els = list_els[i].find_elements(By.CSS_SELECTOR, "div.item-content h4 a")
-            content_els = list_els[i].find_elements(By.CSS_SELECTOR, "div.item-content")
-            sub_els = list_els[i].find_elements(By.CSS_SELECTOR, "div.sub")
-            for j in range(len(rating_els)):
-                gdinfo = content_els[j].find_elements(By.CSS_SELECTOR, "div")[0].text.split("•")
-                if len(gdinfo) < 2:
-                    director = None
+    def scrape_new_movies(self, services: list[str],
+                          added_days_ago: int,
+                          votes_threshold: int = 10000,
+                          rating_threshold: int = 0
+                          ) -> typing.Generator[dict, None, None]:
+        for service in services:
+            url = NEW_MOVIES_URLS[service]
+            log.info(f"Scraping movies from {url}...")
+            time_threshold = datetime.datetime.now() - datetime.timedelta(days=added_days_ago)
+            resp = requests.get(url)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+            title_els = soup.find_all("h3", class_="is-list-heading")
+            list_els = soup.find_all("ul", class_="item-list")
+            for i in range(len(title_els)):
+                title = title_els[i].string
+                if "vandaag" in title.lower():
+                    dt = dateparser.parse("vandaag")
                 else:
-                    director = gdinfo[1].strip()
-                genres = [g.strip() for g in gdinfo[0].split("/")]
-                movie = {"rating": float(rating_els[j].text.strip()),
-                         "num_votes": int(rating_els[j].get_attribute("title").split()[0].replace(".", "")),
-                         "date": dt,
-                         "title": movie_title_els[j].text,
-                         "genres": genres,
-                         "director": director,
-                         "sub": sub_els[j].text,
-                         "service": service}
-                log.info(f"Movie found: {movie}")
-                movies.append(movie)
-        return movies
+                    dt = dateparser.parse(title)
+                if dt < time_threshold:  # the next movies are added too long ago
+                    log.info(f"Reached time threshold ({dt}. Stopped scraping.")
+                    break
+                rating_els = list_els[i].select("div.rating span")
+                movie_title_els = list_els[i].select("div.item-content h4 a")
+                content_els = list_els[i].select("div.item-content")
+                sub_els = list_els[i].select("div.sub")
+                for j in range(len(rating_els)):
+                    gdinfo = content_els[j].find("div").text.split("•")
+                    if len(gdinfo) < 2:
+                        director = None
+                    else:
+                        director = gdinfo[1].strip()
+                    genres = [g.strip() for g in gdinfo[0].split("/")]
+                    title_el = movie_title_els[j]
+                    m = re.match(r"^(?P<title>.+) \((?P<year>[0-9]{4})\)$", str(title_el.text))
+                    movie = {"rating": float(rating_els[j].text.strip()),
+                             "num_votes": int(rating_els[j]["title"].split()[0].replace(".", "")),
+                             "date": dt,
+                             "release_year": str(m.group("year")),
+                             "title": str(m.group("title")),
+                             "genres": genres,
+                             "director": director,
+                             "service": service,
+                             "url": f"{FILMVANDAAG_HOST}{title_el['href']}"}
+                    if movie["num_votes"] < votes_threshold:
+                        log.info(f"Number of votes {movie['num_votes']} below threshold {votes_threshold}. Discarded.")
+                    elif movie["rating"] < rating_threshold:
+                        log.info(f"Rating {movie['rating']} below threshold {rating_threshold}. Discarded.")
+                    else:
+                        yield movie
 
     def get_search_movies_browser_url(self, services: list = None,
                       genres: list = None,

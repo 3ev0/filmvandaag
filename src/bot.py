@@ -21,18 +21,6 @@ STREAMINGSERVICE, GENRES, IMDB_SCORE, RELEASE_YEAR, SHOW_MOVIES = range(5)
 RESP_TO_IMDB_SCORE, RESP_QUIT, RESP_MORE = [f"sc_{n}" for n in range(3)]
 
 
-def parse_services_input(services_str: str) -> (list, list):
-    """ Return (unrecognized services, recognized services) """
-    errs = []
-    if services_str.lower() in ["all", "any"]:
-        services = config.streaming_services
-    else:
-        service_strings = [ss.lower() for ss in services_str.split()]
-        errs = [ss for ss in service_strings if ss not in config.streaming_services]
-        services = [ss for ss in service_strings if ss in config.streaming_services]
-    return errs, services
-
-
 def handle_bot_exception(u: object, context: CallbackContext) -> None:
     raise context.error
 
@@ -71,11 +59,22 @@ class FilmVandaagBot:
             conversation_timeout=CONV_TIMEOUT
         )
         self.new_movie_conv_handler = ConversationHandler(
-            entry_points=[CommandHandler(["new", "nieuw"], self.new_movies)],
+            entry_points=[CommandHandler(["nieuw"], self.new_movies)],
             states={
-                STREAMINGSERVICE: [MessageHandler(Filters.update & ~Filters.command, self.handle_input_services)],
+                STREAMINGSERVICE: [
+                    CallbackQueryHandler(self.cancel, pattern='^' + str(RESP_QUIT) + '$'),
+                    CallbackQueryHandler(self.handle_input_services)
+                ],
+                SHOW_MOVIES: [
+                    CallbackQueryHandler(self.cancel, pattern='^' + str(RESP_QUIT) + '$'),
+                    CallbackQueryHandler(self.show_more_movies)
+                ],
+                ConversationHandler.TIMEOUT: [
+                    CallbackQueryHandler(self.handle_timeout)
+                ]
             },
-            fallbacks=[CommandHandler('cancel', self.cancel)]
+            fallbacks=[CommandHandler('cancel', self.cancel)],
+            conversation_timeout=CONV_TIMEOUT
         )
         self.config = config
         self.updater.dispatcher.add_handler(self.new_movie_conv_handler)
@@ -98,8 +97,7 @@ class FilmVandaagBot:
         return GENRES
 
     def handle_input_genres(self, update: Update, context: CallbackContext) -> int:
-        if "selected_genres" not in context.user_data:
-            context.user_data["selected_genres"] = []
+        context.user_data["selected_genres"] = []
         cancel_button = InlineKeyboardButton("Stop maar", callback_data=RESP_QUIT)
         query = update.callback_query
         resp = query.data
@@ -239,59 +237,48 @@ class FilmVandaagBot:
         return ConversationHandler.END
 
     def handle_input_services(self, update: Update, context: CallbackContext) -> int:
-        """Store the selected services"""
-        errs, services = parse_services_input(update.message.text)
-        if errs:
-            keys = config.streaming_services + ["any"]
-            reply_keyboard = [keys]
-
-            update.message.reply_text(
-                f'Oeps, *{",".join(errs)}*? Probeer nog eens:', parse_mode=ParseMode.MARKDOWN_V2,
-                reply_markup=ReplyKeyboardMarkup(
-                    reply_keyboard, one_time_keyboard=True, input_field_placeholder='Streamingdienst'
-                ),
-            )
-            return STREAMINGSERVICE
-
+        query = update.callback_query
+        resp = query.data
+        log.info(f"callback handle_input_services with query data: {resp}")
+        if resp in ["all", "any"]:
+            services = config.streaming_services
         else:
-            context.user_data["services"] = services
-            movies = []
-            update.message.reply_text(
-                f'Okido. Momentje. Ik haal de films op voor {",".join(services)}...',
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            for service in services:
-                movies += self.scraper.scrape_new_movies(service, self.config["NEW_MOVIES_THRESHOLD_DAYS"])
-            movies = [m for m in sorted(movies, key=lambda movie: movie["rating"], reverse=True)
-                      if m["rating"] >= self.config["NEW_MOVIES_MIN_RATING"]]
-            update.message.reply_text(
-                f'Deze films zijn de laatste {self.config["NEW_MOVIES_THRESHOLD_DAYS"]} dagen toegevoegd '
-                f'en hebben een score van {self.config["NEW_MOVIES_MIN_RATING"]} of hoger.',
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            reply = ""
-            for m in movies:
-                reply += f"*{escape_markdown(m['title'], version=2)}* on {m['service']} " \
-                         f"imdb:*{escape_markdown(str(m['rating']), version=2)}*\n"
-            if not reply:
-                reply = f"Geen nieuwe films gevonden in afgelopen {self.config['NEW_MOVIES_THRESHOLD_DAYS']} dagen."
+            services = [resp]
+        query.edit_message_text(
+            text=f'Okido. Momentje. Ik haal de films op voor {", ".join(services)}...',
+            reply_markup=None,
+        )
+        query.answer()
+        gen = self.scraper.scrape_new_movies(services,
+                                             added_days_ago=self.config["NEW_MOVIES_THRESHOLD_DAYS"],
+                                             votes_threshold=self.config["IMDB_VOTES_THRESHOLD"],
+                                             rating_threshold=self.config["NEW_MOVIES_MIN_RATING"]
+                                             )
+        context.user_data["movies_generator"] = gen
+        services_text = f"streamingdiensten: {', '.join(services)}"
+        imdb_score_text = f"imdb\-score: *{escape_markdown(str(self.config['NEW_MOVIES_MIN_RATING']), version=2)}* " \
+                          f"\(minimaal *{escape_markdown(str(self.config['IMDB_VOTES_THRESHOLD']), version=2)} stemmen*\)"
 
-            update.message.reply_text(reply, reply_markup=ReplyKeyboardRemove(), parse_mode=ParseMode.MARKDOWN_V2)
-            return ConversationHandler.END
-
+        query.edit_message_text(
+            text=f'Deze films zijn de laatste *{self.config["NEW_MOVIES_THRESHOLD_DAYS"]} dagen* toegevoegd\.\n'
+                 f'{services_text}\n{imdb_score_text}',
+            reply_markup=None,
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
+        return self.show_more_movies(update, context)
 
     def new_movies(self, update: Update, context: CallbackContext) -> int:
-        """Starts the conversation and asks user about streaming services"""
-        keys = config.streaming_services + ["any"]
-        reply_keyboard = [keys]
-
-        update.message.reply_text(
-            'Oke, laatste toegevoegde films dus. Welke streamingdienst?',
-            reply_markup=ReplyKeyboardMarkup(
-                reply_keyboard, one_time_keyboard=True, input_field_placeholder='Streamingdienst'
-            ),
-        )
+        log.info(f"new_movies conversation started by user {update.message.from_user}.")
+        button_texts = config.streaming_services
+        cancel_button = InlineKeyboardButton("Stop maar", callback_data=RESP_QUIT)
+        keyboard = [[InlineKeyboardButton("allemaal", callback_data="any")]]
+        keyboard += [[InlineKeyboardButton(b, callback_data=str(b))] for b in button_texts]
+        keyboard += [[cancel_button]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        update.message.reply_text("Oke, laatste toegevoegde films dus.\nWelke streamingdienst?",
+                                  reply_markup=reply_markup)
         return STREAMINGSERVICE
+
 
     def random_movies(self, update: Update, context: CallbackContext) -> None:
         context.bot.sendMessage(chat_id=update.effective_chat.id, text="Hier heb je een film:")

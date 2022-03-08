@@ -11,9 +11,6 @@ config = {
     "SELENIUM_CONNSTR": os.getenv("SELENIUM_CONNSTR")
 }
 scraper = FilmVandaagScraper(config)
-try:
-    for service in src.config.streaming_services:
-        pprint.pprint(scraper.scrape_new_movies(service))
-except Exception:
-    scraper.driver.quit()
-    raise
+for m in scraper.scrape_new_movies(src.config.streaming_services, added_days_ago=3):
+    print(m)
+

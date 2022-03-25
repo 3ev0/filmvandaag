@@ -92,7 +92,7 @@ class FilmVandaagScraper:
                         director = gdinfo[1].strip()
                     genres = [g.strip() for g in gdinfo[0].split("/")]
                     title_el = movie_title_els[j]
-                    m = re.match(r"^(?P<title>.+) \((?P<year>[0-9]{4})\)$", str(title_el.text))
+                    m = re.match(r"^(?P<title>.+)( \((?P<year>[0-9]{4})\))?$", str(title_el.text))
                     movie = {"rating": float(rating_els[j].text.strip()),
                              "num_votes": int(rating_els[j]["title"].split()[0].replace(".", "")),
                              "date": dt,
@@ -180,7 +180,7 @@ class FilmVandaagScraper:
                     genres = [g.strip() for g in gdinfo[0].split("/")]
                 rating_el = li.find("div", class_="rating").span
                 title_el = li.find("a", class_="title")
-                m = re.match(r"^(?P<title>.+) \((?P<year>[0-9]{4})\)$", title_el.text)
+                m = re.match(r"^(?P<title>.+)( \((?P<year>[0-9]{4})\))?$", title_el.text)
                 movie = {"rating": float(rating_el.text.strip()),
                          "num_votes": int(rating_el["title"].split()[0].replace(".", "")),
                          "release_year": str(m.group("year")),

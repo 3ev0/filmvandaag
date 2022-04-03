@@ -61,6 +61,4 @@ if __name__ == "__main__":
         logging.error(f"A fatal exception occurred: {str(err)}")
         raise
     finally:
-        if fv_scraper.driver:
-            fv_scraper.driver.quit()
         alert_bot.info("Program ended.")

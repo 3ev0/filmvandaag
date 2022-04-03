@@ -88,6 +88,7 @@ class FilmVandaagBot:
     def search_movies(self, update: Update, context: CallbackContext) -> int:
         """Starts the conversation and asks user about streaming services"""
         log.info(f"Search_movies conversation started by user {update.message.from_user}.")
+        context.user_data.clear()
         button_texts = config.genres + ["overig"]
         cancel_button = InlineKeyboardButton("Stop maar", callback_data=RESP_QUIT)
         keyboard = [[InlineKeyboardButton(b, callback_data=str(b))] for b in button_texts]
@@ -269,6 +270,7 @@ class FilmVandaagBot:
 
     def new_movies(self, update: Update, context: CallbackContext) -> int:
         log.info(f"new_movies conversation started by user {update.message.from_user}.")
+        context.user_data.clear()
         button_texts = config.streaming_services
         cancel_button = InlineKeyboardButton("Stop maar", callback_data=RESP_QUIT)
         keyboard = [[InlineKeyboardButton("allemaal", callback_data="any")]]

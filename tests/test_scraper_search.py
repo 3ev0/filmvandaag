@@ -23,7 +23,7 @@ try:
     try:
         while True:
             for c in range(30):
-                print(next(generator)["title"])
+                print(next(generator))
             input()
     except StopIteration:
         print("end")
